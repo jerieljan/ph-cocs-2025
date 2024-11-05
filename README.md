@@ -1,4 +1,4 @@
-# PH COCS 2024
+# PH COCS 2025
 
 *A quick experiment to parse Certificates of Candidacy using LLMs*
 
