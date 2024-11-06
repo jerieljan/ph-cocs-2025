@@ -2,6 +2,9 @@ import llm
 import llm_gemini
 import os
 from pathlib import Path
+import json
+import jsonschema
+from jsonschema import validate
 
 
 def process_coc_file(file_path):
@@ -74,14 +77,15 @@ def process_coc_file(file_path):
     You are provided a scanned copy of a public, government document on Certificates of Candidacy for a party list in the Philippines.
     Your task is to gather the details listed in the document and make it conform to the provided JSON specification.
 
+    OUTPUT MUST BE IN JSON — DO NOT TREAT RESULT AS IF IT WERE MARKDOWN
     The first page contains information about the party list. This generally has the complete name of the party list.
     Succeeding pages should include details of each candidate or representative in the party list. 
     
     NOTES: 
     - "Name of Party / Sectoral / Coalition" can be skipped if it's the same as the party list name. Include it only if it's different.
-    - Skip and ignore redacted or unclear information.
+    - Skip and ignore redacted or unclear information. Use an empty string if information is not provided or not applicable (e.g., Nominee is Single, so their spouse is "")
+    - When data is considered "None", use "" instead.
     - Normalize all names with proper capitalization, except for acronyms like NCR.
-    - Since the output is JSON, do not wrap the results in Markdown-style blocks (e.g., json``` [...] ```)
     
     <|json_specification|>
     {reqs_json_spec}
@@ -107,9 +111,41 @@ def process_coc_file(file_path):
 def process_all_cocs(data_dir):
     processed_files = 0
     error_files = []
+    warning_files = []
 
     output_dir = Path("output")
     output_dir.mkdir(exist_ok=True)
+
+    # Define the JSON schema based on reqs_json_spec
+    schema = {
+        "type": "object",
+        "properties": {
+            "party_name": {"type": "string"},
+            "nominees": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "nominee_no": {"type": "string"},
+                        "full_name": {"type": "string"},
+                        "date_of_birth": {"type": ["string", "null"]},
+                        "place_of_birth": {"type": "string"},
+                        "age": {"type": "integer"},
+                        "sex": {"type": "string"},
+                        "civil_status": {"type": "string"},
+                        "spouses_name": {"type": ["string", "null"]},
+                        "citizenship_status": {"type": "string"},
+                        "profession_occupation": {"type": "string"},
+                        "residence": {"type": "string"},
+                        "period_of_residence": {"type": "string"},
+                        "voter_declaration_address": {"type": "string"}
+                    },
+                    "required": ["nominee_no", "full_name", "place_of_birth", "age", "sex", "civil_status", "citizenship_status", "profession_occupation", "residence", "period_of_residence", "voter_declaration_address"]
+                }
+            }
+        },
+        "required": ["party_name", "nominees"]
+    }
 
     for filename in os.listdir(data_dir):
         if filename.endswith(".pdf"):
@@ -118,26 +154,46 @@ def process_all_cocs(data_dir):
 
             result = process_coc_file(file_path)
 
+            # Remove the first and last line (assuming they contain json``` and ```)
+            result_lines = result.split('\n')
+            if len(result_lines) > 2:
+                result = '\n'.join(result_lines[1:-1])
+
+            # First Check: Validate JSON and schema
+            try:
+                result_json = json.loads(result)
+                validate(instance=result_json, schema=schema)
+            except (json.JSONDecodeError, jsonschema.exceptions.ValidationError) as e:
+                error_files.append(filename)
+                print(f"Error: Invalid JSON or schema for {filename}: {str(e)}")
+                continue
+
+            # Second Check: Check number of nominees
+            if len(result_json["nominees"]) != 10:
+                warning_files.append(filename)
+                print(f"Warning: {filename} does not have exactly 10 nominees. It has {len(result_json['nominees'])} nominees.")
+
             output_file = output_dir / f"{filename[:-4]}.json"
             with open(output_file, "w", encoding="utf-8") as f:
-                f.write(result)
+                json.dump(result_json, f, indent=2, ensure_ascii=False)
 
-            if result.startswith("Error"):
-                error_files.append(filename)
-                print(f"Error encountered: {filename}")
-            else:
-                processed_files += 1
-                print(f"Done: {filename}")
+            processed_files += 1
+            print(f"Done: {filename}")
 
     print(f"\nProcessing complete.")
     print(f"Total files processed: {processed_files}")
     print(f"Total errors encountered: {len(error_files)}")
+    print(f"Total warnings: {len(warning_files)}")
 
     if error_files:
         print("\nFiles with errors:")
         for error_file in error_files:
             print(f"- {error_file}")
 
+    if warning_files:
+        print("\nFiles with warnings:")
+        for warning_file in warning_files:
+            print(f"- {warning_file}")
 
 if __name__ == "__main__":
     data_directory = "data/"
