@@ -111,10 +111,10 @@ def process_coc_file(file_path):
 def process_all_cocs(data_dir):
     processed_files = 0
     error_files = []
-    warning_files = []
-
     output_dir = Path("output")
     output_dir.mkdir(exist_ok=True)
+    output_errors_dir = Path("output-errors")
+    output_errors_dir.mkdir(exist_ok=True)
 
     # Define the JSON schema based on reqs_json_spec
     schema = {
@@ -159,21 +159,17 @@ def process_all_cocs(data_dir):
             if len(result_lines) > 2:
                 result = '\n'.join(result_lines[1:-1])
 
-            # First Check: Validate JSON and schema
+            # Check: Validate JSON and schema
             try:
                 result_json = json.loads(result)
                 validate(instance=result_json, schema=schema)
+                output_file = output_dir / f"{filename[:-4]}.json"
             except (json.JSONDecodeError, jsonschema.exceptions.ValidationError) as e:
                 error_files.append(filename)
                 print(f"Error: Invalid JSON or schema for {filename}: {str(e)}")
-                continue
+                output_file = output_errors_dir / f"{filename[:-4]}.json"
+                result_json = {"error": str(e), "raw_output": result}
 
-            # Second Check: Check number of nominees
-            if len(result_json["nominees"]) != 10:
-                warning_files.append(filename)
-                print(f"Warning: {filename} does not have exactly 10 nominees. It has {len(result_json['nominees'])} nominees.")
-
-            output_file = output_dir / f"{filename[:-4]}.json"
             with open(output_file, "w", encoding="utf-8") as f:
                 json.dump(result_json, f, indent=2, ensure_ascii=False)
 
@@ -183,17 +179,10 @@ def process_all_cocs(data_dir):
     print(f"\nProcessing complete.")
     print(f"Total files processed: {processed_files}")
     print(f"Total errors encountered: {len(error_files)}")
-    print(f"Total warnings: {len(warning_files)}")
-
     if error_files:
         print("\nFiles with errors:")
         for error_file in error_files:
             print(f"- {error_file}")
-
-    if warning_files:
-        print("\nFiles with warnings:")
-        for warning_file in warning_files:
-            print(f"- {warning_file}")
 
 if __name__ == "__main__":
     data_directory = "data/"
